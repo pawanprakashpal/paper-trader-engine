@@ -1,0 +1,75 @@
+# Live PAPER day trading for one session. Press "Run workflow" (web or GitHub mobile app), pick the market.
+# Start it within ~2 hours before the open: NSE 09:15 IST, US 09:30 ET. It never places real orders.
+# A session is longer than GitHub's 6-hour job limit, so it runs as two jobs; the second picks up the first's state.
+name: live-paper-day-trading
+on:
+  workflow_dispatch:
+    inputs:
+      market:
+        description: "Market"
+        type: choice
+        options: [india, us]
+        default: india
+concurrency:
+  group: live-${{ inputs.market }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+env:
+  PYTHONUNBUFFERED: "1"
+  LIVE_OUT: out
+  ANGEL_HIST_API_KEY: ${{ secrets.ANGEL_HIST_API_KEY }}
+  ANGEL_CLIENT_CODE: ${{ secrets.ANGEL_CLIENT_CODE }}
+  ANGEL_PIN: ${{ secrets.ANGEL_PIN }}
+  ANGEL_TOTP_SECRET: ${{ secrets.ANGEL_TOTP_SECRET }}
+  ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+  ALPACA_SECRET: ${{ secrets.ALPACA_SECRET }}
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  FTP_HOST: ${{ secrets.FTP_HOST }}
+  FTP_USER: ${{ secrets.FTP_USER }}
+  FTP_PASS: ${{ secrets.FTP_PASS }}
+  FTP_DIR: ${{ secrets.FTP_DIR }}
+  CAPITAL_INDIA: ${{ secrets.CAPITAL_INDIA }}
+  PER_TRADE_INDIA: ${{ secrets.PER_TRADE_INDIA }}
+  MAX_TRADES_INDIA: ${{ secrets.MAX_TRADES_INDIA }}
+  CAPITAL_US: ${{ secrets.CAPITAL_US }}
+  PER_TRADE_US: ${{ secrets.PER_TRADE_US }}
+  MAX_TRADES_US: ${{ secrets.MAX_TRADES_US }}
+jobs:
+  morning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q pandas numpy requests
+      - name: Trade until midday (paper)
+        run: python engine.py ${{ inputs.market }} --watch --until ${{ inputs.market == 'india' && '12:15' || '12:45' }}
+      - name: Hand state to the afternoon job (no credentials or session tokens inside)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: state
+          path: state/
+          retention-days: 1
+          if-no-files-found: ignore
+  afternoon:
+    needs: morning
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q pandas numpy requests
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: state
+          path: state/
+      - name: Trade until square-off (paper)
+        run: python engine.py ${{ inputs.market }} --watch --continue
