@@ -274,6 +274,9 @@ def upload(cfg, mkt, final_key=None):
         with FTP_TLS(cfg["FTP_HOST"], timeout=30) as ftp:
             ftp.login(cfg["FTP_USER"], cfg["FTP_PASS"]); ftp.prot_p()
             base = cfg.get("FTP_DIR", "").strip("/")
+            import io as _io                                    # let the Vercel page read these files (CORS)
+            ftp.storbinary(f"STOR {'/'.join(x for x in [base, '.htaccess'] if x)}",
+                           _io.BytesIO(b'Header set Access-Control-Allow-Origin "*"\nHeader set Cache-Control "no-store"\n'))
             for f in files:
                 if not f.exists(): continue
                 remote = "/".join(x for x in [base, "days" if f.parent.name == "days" else "", f.name] if x)
