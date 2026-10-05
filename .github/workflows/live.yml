@@ -10,8 +10,12 @@ on:
         type: choice
         options: [india, us]
         default: india
+      check_only:
+        description: "Only test the setup (login + Telegram), don't trade"
+        type: boolean
+        default: false
 concurrency:
-  group: live-${{ inputs.market }}
+  group: live-${{ inputs.market }}-${{ inputs.check_only }}   # a setup check never waits behind a running session
   cancel-in-progress: false
 permissions:
   contents: read
@@ -46,7 +50,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -q pandas numpy requests
+      - name: Setup check (login + Telegram test message)
+        if: inputs.check_only
+        run: python engine.py ${{ inputs.market }} --check
       - name: Trade until midday (paper)
+        if: ${{ !inputs.check_only }}
         run: python engine.py ${{ inputs.market }} --watch --until ${{ inputs.market == 'india' && '12:15' || '12:45' }}
       - name: Hand state to the afternoon job (no credentials or session tokens inside)
         if: always()
@@ -58,6 +66,7 @@ jobs:
           if-no-files-found: ignore
   afternoon:
     needs: morning
+    if: ${{ !inputs.check_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 355
     steps:

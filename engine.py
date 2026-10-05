@@ -180,13 +180,23 @@ def day_trades(mkt, bars, day):
 
 
 def telegram(cfg, text):
-    tok, chat = cfg.get("TELEGRAM_BOT_TOKEN"), cfg.get("TELEGRAM_CHAT_ID")
-    if not tok or not chat: return
+    """Send an alert. Never raises (an alert failing must never stop the engine), but logs Telegram's own error."""
+    tok = (cfg.get("TELEGRAM_BOT_TOKEN") or "").strip().strip('"').strip("'").strip("<>")
+    chat = (cfg.get("TELEGRAM_CHAT_ID") or "").strip().strip('"').strip("'")
+    if tok.lower().startswith("bot") and ":" in tok[3:]:
+        tok = tok[3:]                                          # tolerate a pasted "bot" prefix
+    if not tok or not chat:
+        print("  (Telegram not configured: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing)"); return False
     try:
-        requests.post(f"https://api.telegram.org/bot{tok}/sendMessage", timeout=15,
-                      data={"chat_id": chat, "text": text, "parse_mode": "HTML", "disable_web_page_preview": "true"})
-    except requests.RequestException:
-        pass                                                   # an alert failing must never stop the engine
+        r = requests.post(f"https://api.telegram.org/bot{tok}/sendMessage", timeout=15,
+                          data={"chat_id": chat, "text": text, "parse_mode": "HTML", "disable_web_page_preview": "true"})
+        j = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+        if not j.get("ok"):
+            # Telegram's description only, e.g. "Unauthorized" or "Bad Request: chat not found" (never the token)
+            print(f"  (Telegram alert failed: HTTP {r.status_code} {j.get('description', '')})"); return False
+        return True
+    except requests.RequestException as e:
+        print(f"  (Telegram alert failed: {type(e).__name__})"); return False
 
 
 def write_json(path, obj):
@@ -370,6 +380,17 @@ def main():
     cfg = env()
     apply_sizing(cfg)
     STATE.mkdir(exist_ok=True)
+    if "--check" in sys.argv:                                   # quick setup test: Angel One login + Telegram, then exit
+        ok = True
+        if mkt == "india":
+            try:
+                AngelData(cfg, {})._jwt(f"{pd.Timestamp.now(tz=TZ['india']):%Y-%m-%d}"); print("Angel One login OK.")
+            except Exception as e:
+                print(f"Angel One login FAILED: {e}"); ok = False
+        sent = telegram(cfg, f"🔧 Setup check ({'NSE' if mkt == 'india' else 'US'}): Telegram alerts work."
+                             + (" Angel One login OK." if mkt == "india" and ok else ""))
+        print("Telegram test message sent." if sent else "Telegram test message NOT sent (see the reason above).")
+        sys.exit(0 if ok and sent else 5)
     if "--watch" in sys.argv:
         until = sys.argv[sys.argv.index("--until") + 1] if "--until" in sys.argv else None
         return watch(mkt, cfg, until, first="--continue" not in sys.argv)
