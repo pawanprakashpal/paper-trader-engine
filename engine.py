@@ -298,13 +298,26 @@ def scrub_state(mkt):
 def watch(mkt, cfg, until=None, first=True):
     """Manual mode: started by the user, runs one step a minute after each 5-minute bar closes, stops after square-off.
     until="HH:MM" (market time) hands over early (GitHub job limit); first=False skips the start alert (second job)."""
-    data = AngelData(cfg, {}) if mkt == "india" else AlpacaData(cfg, {})
     tz = TZ[mkt]
+    now = pd.Timestamp.now(tz=tz)
+    print(f"Live paper day trading ({mkt}) started {now:%Y-%m-%d %H:%M %Z}. Ctrl+C to stop.")
+    # fail loudly (non-zero exit -> red run, second job skipped) instead of quietly doing nothing
+    need = {"india": ["ANGEL_HIST_API_KEY", "ANGEL_CLIENT_CODE", "ANGEL_PIN", "ANGEL_TOTP_SECRET"],
+            "us": ["ALPACA_KEY_ID", "ALPACA_SECRET"]}[mkt]
+    missing = [k for k in need if not cfg.get(k)]
+    if missing:
+        print(f"Missing secrets for {mkt}: {', '.join(missing)}  (repo Settings -> Secrets and variables -> Actions)")
+        sys.exit(2)
+    if now.dayofweek >= 5:
+        print("The market is closed today (weekend)."); sys.exit(3)
+    if until:   # GitHub morning job: it must reach `until` within the ~6-hour job limit
+        earliest = now.normalize() + pd.Timedelta(until + ":00") - pd.Timedelta(minutes=345)
+        if now < earliest:
+            print(f"Too early: start at or after {earliest:%H:%M %Z} "
+                  f"({earliest.tz_convert('America/Chicago'):%I:%M %p} Central) so the job doesn't hit GitHub's time limit.")
+            sys.exit(3)
+    data = AngelData(cfg, {}) if mkt == "india" else AlpacaData(cfg, {})
     errors = 0
-    print(f"Live paper day trading ({mkt}) started {pd.Timestamp.now(tz=tz):%Y-%m-%d %H:%M %Z}. Ctrl+C to stop.")
-    open_t = pd.Timestamp.now(tz=tz).normalize() + pd.Timedelta(SESSION[mkt][0] + ":00")
-    if pd.Timestamp.now(tz=tz) < open_t - pd.Timedelta(hours=2):
-        print(f"More than 2 hours before the {SESSION[mkt][0]} open; start closer to the open. Bye."); return
     if first:
         telegram(cfg, f"▶️ Live paper day trading started ({'NSE' if mkt == 'india' else 'US'})")
     while True:

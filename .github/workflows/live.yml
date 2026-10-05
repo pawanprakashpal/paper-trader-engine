@@ -1,5 +1,5 @@
 # Live PAPER day trading for one session. Press "Run workflow" (web or GitHub mobile app), pick the market.
-# Start it within ~2 hours before the open: NSE 09:15 IST, US 09:30 ET. It never places real orders.
+# Start it from 06:30 IST (NSE) or 07:00 ET (US) onward; it waits for the open. It never places real orders.
 # A session is longer than GitHub's 6-hour job limit, so it runs as two jobs; the second picks up the first's state.
 name: live-paper-day-trading
 on:
