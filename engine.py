@@ -183,8 +183,9 @@ def telegram(cfg, text):
     """Send an alert. Never raises (an alert failing must never stop the engine), but logs Telegram's own error."""
     tok = (cfg.get("TELEGRAM_BOT_TOKEN") or "").strip().strip('"').strip("'").strip("<>")
     chat = (cfg.get("TELEGRAM_CHAT_ID") or "").strip().strip('"').strip("'")
-    if tok.lower().startswith("bot") and ":" in tok[3:]:
-        tok = tok[3:]                                          # tolerate a pasted "bot" prefix
+    import re
+    m = re.search(r"(\d{6,}:[A-Za-z0-9_-]{30,})", tok)         # the token inside whatever was pasted (bare, "bot..." or a full URL)
+    tok = m.group(1) if m else tok
     if not tok or not chat:
         print("  (Telegram not configured: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing)"); return False
     try:
