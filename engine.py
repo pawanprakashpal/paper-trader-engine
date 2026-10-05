@@ -30,6 +30,9 @@ SESSION = {"india": ("09:15", "15:30"), "us": ("09:30", "16:00")}
 OUT = Path(os.environ.get("LIVE_OUT", HERE / "out"))          # where live.json / days/*.json go (web folder on cPanel)
 STATE = HERE / "state"
 CUR = {"india": "₹", "us": "$"}
+# Exchange holidays (weekdays only) so a scheduled run exits at once instead of waiting for data that never comes.
+HOLIDAYS = {"india": {"2026-10-02", "2026-10-20", "2026-11-10", "2026-11-24", "2026-12-25"},
+            "us": {"2026-11-26", "2026-12-25"}}
 
 
 # ---------------------------------------------------------------- config
@@ -319,8 +322,9 @@ def watch(mkt, cfg, until=None, first=True):
     if missing:
         print(f"Missing secrets for {mkt}: {', '.join(missing)}  (repo Settings -> Secrets and variables -> Actions)")
         sys.exit(2)
-    if now.dayofweek >= 5:
-        print("The market is closed today (weekend)."); sys.exit(3)
+    if now.dayofweek >= 5 or f"{now:%Y-%m-%d}" in HOLIDAYS[mkt]:
+        print("The market is closed today (weekend/holiday). Nothing to do.")
+        sys.exit(3 if os.environ.get("GITHUB_EVENT_NAME") != "schedule" else 0)
     if until:   # GitHub morning job: it must reach `until` within the ~6-hour job limit
         earliest = now.normalize() + pd.Timedelta(until + ":00") - pd.Timedelta(minutes=345)
         if now < earliest:
