@@ -318,8 +318,19 @@ def watch(mkt, cfg, until=None, first=True):
             sys.exit(3)
     data = AngelData(cfg, {}) if mkt == "india" else AlpacaData(cfg, {})
     errors = 0
+    if mkt == "india":                      # check the Angel One login now, not at the first bar
+        try:
+            data._jwt(f"{now:%Y-%m-%d}")
+            print("Angel One login OK.")
+            login_note = "Angel One login OK ✅"
+        except Exception as e:
+            print(f"Angel One login FAILED: {e}")
+            telegram(cfg, f"⚠️ Live paper engine (NSE): Angel One login failed: {str(e)[:200]}")
+            sys.exit(4)
+    else:
+        login_note = "Alpaca data"
     if first:
-        telegram(cfg, f"▶️ Live paper day trading started ({'NSE' if mkt == 'india' else 'US'})")
+        telegram(cfg, f"▶️ Live paper day trading started ({'NSE' if mkt == 'india' else 'US'}) · {login_note}")
     while True:
         now = pd.Timestamp.now(tz=tz)
         if until and now.strftime("%H:%M") >= until:
