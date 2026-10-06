@@ -114,9 +114,14 @@ class AngelData:
         rows = []
         for t in tickers:
             if not tok.get(t): continue
-            r = requests.post(self.ROOT + "/rest/secure/angelbroking/historical/v1/getCandleData", headers=self._headers(jwt), timeout=30,
-                              json={"exchange": "NSE", "symboltoken": tok[t], "interval": "FIVE_MINUTE",
-                                    "fromdate": frm, "todate": now.strftime("%Y-%m-%d %H:%M")}).json()
+            resp = requests.post(self.ROOT + "/rest/secure/angelbroking/historical/v1/getCandleData",
+                                 headers=self._headers(jwt), timeout=30,
+                                 json={"exchange": "NSE", "symboltoken": tok[t], "interval": "FIVE_MINUTE",
+                                       "fromdate": frm, "todate": now.strftime("%Y-%m-%d %H:%M")})
+            try:
+                r = resp.json()
+            except ValueError:                                 # Angel sometimes returns HTML/empty on brief outages or rate-limits
+                raise RuntimeError(f"Angel candle API non-JSON (status {resp.status_code}): {resp.text[:200]!r}")
             for ts, o, h, l, c, v in (r.get("data") or []):
                 rows.append((t, ts, o, h, l, c, v))
             time.sleep(0.35)                                   # historical API allows ~3 requests/second
