@@ -132,6 +132,9 @@ class AngelData:
         jwt, tok = self._jwt(today), self._tokens(tickers)
         frm, to = (now - pd.Timedelta(days=6)).strftime("%Y-%m-%d 09:15"), now.strftime("%Y-%m-%d %H:%M")
         rows, failed, last_err = [], [], ""
+        no_token = [t.replace(".NS", "") for t in tickers if not tok.get(t)]
+        if no_token and not self.state.get("warned_no_token"):
+            print(f"  (not in Angel One's instrument list, skipped: {', '.join(no_token)})"); self.state["warned_no_token"] = True
         for t in tickers:
             if not tok.get(t): continue
             try:
@@ -139,7 +142,7 @@ class AngelData:
                     rows.append((t, ts, o, h, l, c, v))
             except RuntimeError as e:                          # one bad stock must not sink the whole step
                 failed.append(t.replace(".NS", "")); last_err = str(e)
-            time.sleep(0.35)                                   # historical API allows ~3 requests/second
+            time.sleep(0.5)                                    # stay under Angel's per-second limit (bursts get refused)
         if failed and not rows:
             raise RuntimeError(f"all {len(failed)} candle requests failed; last: {last_err}")
         if failed:
