@@ -418,6 +418,9 @@ def main():
                 tok = ad._tokens(["RELIANCE.NS"])["RELIANCE.NS"]
                 data = ad.candles(jwt, tok, (now - pd.Timedelta(days=4)).strftime("%Y-%m-%d 09:15"), now.strftime("%Y-%m-%d %H:%M"), tries=1)
                 print(f"Angel One candle data OK: {len(data)} five-minute bars for RELIANCE.")
+                t0 = time.time(); full = ad.bars(DT.universe("india"), now)          # same burst as a live step
+                n = 0 if full is None else full["Close"].shape[1]
+                print(f"Full step fetch: {n}/{len(DT.universe('india'))} stocks returned candles in {time.time() - t0:.0f}s.")
             except Exception as e:
                 print(f"Angel One check FAILED: {e}"); ok = False
         sent = telegram(cfg, f"🔧 Setup check ({'NSE' if mkt == 'india' else 'US'}): Telegram alerts work."
