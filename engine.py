@@ -107,24 +107,43 @@ class AngelData:
             p.write_text(json.dumps(tok, indent=1))
         return tok
 
+    def candles(self, jwt, token, frm, to, tries=3):
+        """One getCandleData call. Angel sometimes answers with an empty/HTML/plain-text body (brief outages,
+        rate limits, access denials), so retry a couple of times and, if it keeps failing, raise with the HTTP
+        status and the start of the body so the real cause is visible (Pawan's fix, cb32f5b, kept and extended)."""
+        last = ""
+        for attempt in range(tries):
+            resp = requests.post(self.ROOT + "/rest/secure/angelbroking/historical/v1/getCandleData", headers=self._headers(jwt),
+                                 timeout=30, json={"exchange": "NSE", "symboltoken": token, "interval": "FIVE_MINUTE",
+                                                   "fromdate": frm, "todate": to})
+            try:
+                r = resp.json()
+            except ValueError:
+                last = f"Angel candle API non-JSON (status {resp.status_code}): {resp.text[:200]!r}"
+            else:
+                if r.get("status") is not False:
+                    return r.get("data") or []
+                last = f"Angel candle API error: {r.get('message')} ({r.get('errorcode')})"
+            time.sleep(1 + 2 * attempt)                        # 1 s, then 3 s
+        raise RuntimeError(last)
+
     def bars(self, tickers, now):
         today = f"{now:%Y-%m-%d}"
         jwt, tok = self._jwt(today), self._tokens(tickers)
-        frm = (now - pd.Timedelta(days=6)).strftime("%Y-%m-%d 09:15")
-        rows = []
+        frm, to = (now - pd.Timedelta(days=6)).strftime("%Y-%m-%d 09:15"), now.strftime("%Y-%m-%d %H:%M")
+        rows, failed, last_err = [], [], ""
         for t in tickers:
             if not tok.get(t): continue
-            resp = requests.post(self.ROOT + "/rest/secure/angelbroking/historical/v1/getCandleData",
-                                 headers=self._headers(jwt), timeout=30,
-                                 json={"exchange": "NSE", "symboltoken": tok[t], "interval": "FIVE_MINUTE",
-                                       "fromdate": frm, "todate": now.strftime("%Y-%m-%d %H:%M")})
             try:
-                r = resp.json()
-            except ValueError:                                 # Angel sometimes returns HTML/empty on brief outages or rate-limits
-                raise RuntimeError(f"Angel candle API non-JSON (status {resp.status_code}): {resp.text[:200]!r}")
-            for ts, o, h, l, c, v in (r.get("data") or []):
-                rows.append((t, ts, o, h, l, c, v))
+                for ts, o, h, l, c, v in self.candles(jwt, tok[t], frm, to):
+                    rows.append((t, ts, o, h, l, c, v))
+            except RuntimeError as e:                          # one bad stock must not sink the whole step
+                failed.append(t.replace(".NS", "")); last_err = str(e)
             time.sleep(0.35)                                   # historical API allows ~3 requests/second
+        if failed and not rows:
+            raise RuntimeError(f"all {len(failed)} candle requests failed; last: {last_err}")
+        if failed:
+            print(f"  (candles missing this step for {len(failed)} stocks: {', '.join(failed[:8])}; last error: {last_err[:120]})")
         return _frame(rows, TZ["india"])
 
 
@@ -394,11 +413,15 @@ def main():
         ok = True
         if mkt == "india":
             try:
-                AngelData(cfg, {})._jwt(f"{pd.Timestamp.now(tz=TZ['india']):%Y-%m-%d}"); print("Angel One login OK.")
+                ad = AngelData(cfg, {}); now = pd.Timestamp.now(tz=TZ["india"])
+                jwt = ad._jwt(f"{now:%Y-%m-%d}"); print("Angel One login OK.")
+                tok = ad._tokens(["RELIANCE.NS"])["RELIANCE.NS"]
+                data = ad.candles(jwt, tok, (now - pd.Timedelta(days=4)).strftime("%Y-%m-%d 09:15"), now.strftime("%Y-%m-%d %H:%M"), tries=1)
+                print(f"Angel One candle data OK: {len(data)} five-minute bars for RELIANCE.")
             except Exception as e:
-                print(f"Angel One login FAILED: {e}"); ok = False
+                print(f"Angel One check FAILED: {e}"); ok = False
         sent = telegram(cfg, f"🔧 Setup check ({'NSE' if mkt == 'india' else 'US'}): Telegram alerts work."
-                             + (" Angel One login OK." if mkt == "india" and ok else ""))
+                             + (" Angel One login + candle data OK." if mkt == "india" and ok else ""))
         print("Telegram test message sent." if sent else "Telegram test message NOT sent (see the reason above).")
         sys.exit(0 if ok and sent else 5)
     if "--watch" in sys.argv:
