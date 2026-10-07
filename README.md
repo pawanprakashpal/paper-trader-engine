@@ -7,7 +7,7 @@ first-hour momentum) on live 5-minute bars, for one NSE or US session at a time.
 simulated entry and exit, and it publishes a live JSON snapshot for a dashboard page.
 
 ## How it runs
-- **Runs automatically** on weekdays (NSE 09:00 IST, US 13:15 UTC = 09:15 ET in summer), skipping exchange holidays. Or press **Actions → live-paper-day-trading → Run workflow** and pick `india` or `us`. Start it from 06:30 IST (NSE; 8:00 PM US Central the evening before) or 07:00 ET (US); it waits for the open. A missing secret or a too-early start fails the run with a clear message.
+- **Runs automatically** on weekdays, skipping exchange holidays. GitHub often starts scheduled runs hours late, so each market has several triggers (NSE from 06:37 IST, US from 07:07 ET); the first to arrive runs the session and the rest exit in seconds. A run that starts mid-session still recomputes the whole day from the open. Or press **Actions → live-paper-day-trading → Run workflow** and pick `india` or `us`. Start it from 06:30 IST (NSE; 8:00 PM US Central the evening before) or 07:00 ET (US); it waits for the open. A missing secret or a too-early start fails the run with a clear message.
 - Every 5 minutes (1 minute after each bar closes), the engine re-runs the strategy rules on the day's completed bars
   (`backtest_intraday.py`, partial-day mode), works out which trades are new or have closed, alerts on them, and
   writes `live-<market>.json`. The whole day is recomputed every step, so a missed step loses nothing.

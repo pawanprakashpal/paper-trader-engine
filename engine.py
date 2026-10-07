@@ -352,12 +352,23 @@ def watch(mkt, cfg, until=None, first=True):
     if now.dayofweek >= 5 or f"{now:%Y-%m-%d}" in HOLIDAYS[mkt]:
         print("The market is closed today (weekend/holiday). Nothing to do.")
         sys.exit(3 if os.environ.get("GITHUB_EVENT_NAME") != "schedule" else 0)
+    # GitHub often starts scheduled runs hours late, so the workflow has several backup triggers; whichever arrives
+    # first runs the session and the others (queued behind it, or arriving after the close) exit quietly here.
+    scheduled = os.environ.get("GITHUB_EVENT_NAME") == "schedule"
+    if now.strftime("%H:%M") > SESSION[mkt][1]:
+        print(f"The session is over ({SESSION[mkt][1]} {tz}). Nothing to do.")
+        sys.exit(0)
     if until:   # GitHub morning job: it must reach `until` within the ~6-hour job limit
         earliest = now.normalize() + pd.Timedelta(until + ":00") - pd.Timedelta(minutes=345)
         if now < earliest:
             print(f"Too early: start at or after {earliest:%H:%M %Z} "
                   f"({earliest.tz_convert('America/Chicago'):%I:%M %p} Central) so the job doesn't hit GitHub's time limit.")
-            sys.exit(3)
+            sys.exit(0 if scheduled else 3)   # a scheduled run leaves it to a later trigger
+    elif not first:   # GitHub afternoon job: only meaningful when it can last until the close (morning job skipped otherwise)
+        earliest = now.normalize() + pd.Timedelta(SESSION[mkt][1] + ":00") - pd.Timedelta(minutes=345)
+        if now < earliest:
+            print(f"The morning job did not run a session (started too early); nothing to continue.")
+            sys.exit(0)
     data = AngelData(cfg, {}) if mkt == "india" else AlpacaData(cfg, {})
     errors = 0
     if mkt == "india":                      # check the Angel One login now, not at the first bar
@@ -372,7 +383,8 @@ def watch(mkt, cfg, until=None, first=True):
     else:
         login_note = "Alpaca data"
     if first:
-        telegram(cfg, f"▶️ Live paper day trading started ({'NSE' if mkt == 'india' else 'US'}) · {login_note}")
+        late = f" · started late ({now:%H:%M}); earlier trades are replayed" if now.strftime("%H:%M") > SESSION[mkt][0] else ""
+        telegram(cfg, f"▶️ Live paper day trading started ({'NSE' if mkt == 'india' else 'US'}) · {login_note}{late}")
     while True:
         now = pd.Timestamp.now(tz=tz)
         if until and now.strftime("%H:%M") >= until:

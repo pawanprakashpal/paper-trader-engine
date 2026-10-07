@@ -1,12 +1,25 @@
 # Live PAPER day trading for one session. It never places real orders.
-# Starts automatically on weekdays (schedule below), or press "Run workflow" (web or GitHub mobile app) and pick the
+# Starts automatically on weekdays (several triggers below), or press "Run workflow" (web or GitHub mobile app) and pick the
 # market; a manual run can start from 06:30 IST (NSE) or 07:00 ET (US) and waits for the open.
 # A session is longer than GitHub's 6-hour job limit, so it runs as two jobs; the second picks up the first's state.
 name: live-paper-day-trading
 on:
+  # GitHub often starts scheduled runs hours late, so each market has several triggers (odd minutes, which are less
+  # crowded). The first to arrive runs the session; later ones queue behind it or arrive after the close, and exit
+  # in seconds. A trigger arriving mid-session still works: each step recomputes the whole day from the open.
   schedule:
-    - cron: "30 3 * * 1-5"    # NSE: 09:00 IST, Mon-Fri (open 09:15)
-    - cron: "15 13 * * 1-5"   # US: 09:15 EDT / 08:15 EST, Mon-Fri (open 09:30 ET)
+    - cron: "7 1 * * 1-5"     # NSE 06:37 IST (open 09:15 IST = 03:45 UTC)
+    - cron: "47 1 * * 1-5"    # NSE 07:17 IST
+    - cron: "27 2 * * 1-5"    # NSE 07:57 IST
+    - cron: "7 3 * * 1-5"     # NSE 08:37 IST
+    - cron: "7 4 * * 1-5"     # NSE 09:37 IST (late backup)
+    - cron: "7 6 * * 1-5"     # NSE 11:37 IST (late backup)
+    - cron: "7 11 * * 1-5"    # US 07:07 EDT (open 09:30 ET = 13:30 UTC in summer)
+    - cron: "47 11 * * 1-5"   # US 07:47 EDT
+    - cron: "27 12 * * 1-5"   # US 08:27 EDT
+    - cron: "7 13 * * 1-5"    # US 09:07 EDT
+    - cron: "7 14 * * 1-5"    # US 10:07 EDT (late backup)
+    - cron: "7 16 * * 1-5"    # US 12:07 EDT (late backup)
   workflow_dispatch:
     inputs:
       market:
@@ -20,12 +33,12 @@ on:
         default: false
 concurrency:
   # one session per market at a time (scheduled and manual share it); a setup check never waits behind a session
-  group: live-${{ inputs.market || (github.event.schedule == '30 3 * * 1-5' && 'india' || 'us') }}-${{ inputs.check_only || false }}
+  group: live-${{ inputs.market || (contains(fromJSON('["7 1 * * 1-5","47 1 * * 1-5","27 2 * * 1-5","7 3 * * 1-5","7 4 * * 1-5","7 6 * * 1-5"]'), github.event.schedule) && 'india' || 'us') }}-${{ inputs.check_only || false }}
   cancel-in-progress: false
 permissions:
   contents: read
 env:
-  MARKET: ${{ inputs.market || (github.event.schedule == '30 3 * * 1-5' && 'india' || 'us') }}
+  MARKET: ${{ inputs.market || (contains(fromJSON('["7 1 * * 1-5","47 1 * * 1-5","27 2 * * 1-5","7 3 * * 1-5","7 4 * * 1-5","7 6 * * 1-5"]'), github.event.schedule) && 'india' || 'us') }}
   PYTHONUNBUFFERED: "1"
   LIVE_OUT: out
   ANGEL_HIST_API_KEY: ${{ secrets.ANGEL_HIST_API_KEY }}
