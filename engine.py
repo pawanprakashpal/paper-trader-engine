@@ -27,6 +27,7 @@ import rules as DT                 # noqa: E402  (strategy list, charges, univer
 
 TZ = {"india": "Asia/Kolkata", "us": "America/New_York"}
 SESSION = {"india": ("09:15", "15:30"), "us": ("09:30", "16:00")}
+SQUARED = {"india": "15:15", "us": "15:55"}   # the square-off bar (15:10 / 15:50) has closed: the day is final
 OUT = Path(os.environ.get("LIVE_OUT", HERE / "out"))          # where live.json / days/*.json go (web folder on cPanel)
 STATE = HERE / "state"
 CUR = {"india": "₹", "us": "$"}
@@ -135,18 +136,29 @@ class AngelData:
         no_token = [t.replace(".NS", "") for t in tickers if not tok.get(t)]
         if no_token and not self.state.get("warned_no_token"):
             print(f"  (not in Angel One's instrument list, skipped: {', '.join(no_token)})"); self.state["warned_no_token"] = True
+        cache = self.__dict__.setdefault("cache", {})          # last good candles per stock (this job only)
+        todo, stale, retry = [t for t in tickers if tok.get(t)], [], []
+        for rnd in range(2):                                   # second round: retry the refused ones after a pause
+            retry = []
+            for t in todo:
+                try:
+                    cache[t] = self.candles(jwt, tok[t], frm, to, tries=2 if rnd == 0 else 3)
+                except RuntimeError as e:                      # one bad stock must not sink the whole step
+                    retry.append(t); last_err = str(e)
+                time.sleep(0.7)                                # stay under Angel's rate limit (bursts get refused)
+            if not retry: break
+            todo = retry; time.sleep(5)
         for t in tickers:
             if not tok.get(t): continue
-            try:
-                for ts, o, h, l, c, v in self.candles(jwt, tok[t], frm, to):
-                    rows.append((t, ts, o, h, l, c, v))
-            except RuntimeError as e:                          # one bad stock must not sink the whole step
-                failed.append(t.replace(".NS", "")); last_err = str(e)
-            time.sleep(0.5)                                    # stay under Angel's per-second limit (bursts get refused)
+            if t in todo and retry:                            # still refused: reuse the last good bars, so the stock's
+                (stale if t in cache else failed).append(t.replace(".NS", ""))  # trades don't vanish for one step
+            for ts, o, h, l, c, v in cache.get(t, []):
+                rows.append((t, ts, o, h, l, c, v))
         if failed and not rows:
             raise RuntimeError(f"all {len(failed)} candle requests failed; last: {last_err}")
-        if failed:
-            print(f"  (candles missing this step for {len(failed)} stocks: {', '.join(failed[:8])}; last error: {last_err[:120]})")
+        if failed or stale:
+            print(f"  (candles refused this step: {len(stale)} using previous bars {', '.join(stale[:8])}; "
+                  f"{len(failed)} missing {', '.join(failed[:8])}; last error: {last_err[:120]})")
         return _frame(rows, TZ["india"])
 
 
@@ -247,7 +259,8 @@ def step(mkt, now, data, cfg, alert=True):
         return "outside session"
     sp = STATE / f"{mkt}.json"
     st = json.loads(sp.read_text()) if sp.exists() else {}
-    if st.get("day") != key:
+    fresh = st.get("day") != key
+    if fresh:
         st = {"day": key, "sent": [], "angel": st.get("angel", {}), "final": False}
     if st["final"]:
         return "day already final"
@@ -279,6 +292,13 @@ def step(mkt, now, data, cfg, alert=True):
                 icon = "✅" if t["net"] > 0 else "🔴"
                 msgs.append(f"{icon} <b>{t['strategy']}</b> exit {t['ticker']} ({t['exit']}) @ {t['exit_px']:,.2f} "
                             f"({t['exit_time']}) · net {cur}{t['net']:+,.0f}")
+
+    # started late (GitHub delay): one catch-up summary instead of a burst of alerts for trades that already happened
+    if fresh and msgs and last_bar.strftime("%H:%M") > (pd.Timestamp(f"{key} {start}") + pd.Timedelta(minutes=10)).strftime("%H:%M"):
+        done = [t for t in trades if t["status"] == "closed"]
+        msgs = [f"⏩ <b>Started late</b> ({hm}); replayed the session so far: {len(trades)} trades "
+                f"({len(trades) - len(done)} still open), closed net {cur}{sum(t['net'] for t in done):+,.0f}. "
+                f"Alerts from now on are live."]
 
     # live snapshot for the page
     strategies = []
@@ -355,8 +375,8 @@ def watch(mkt, cfg, until=None, first=True):
     # GitHub often starts scheduled runs hours late, so the workflow has several backup triggers; whichever arrives
     # first runs the session and the others (queued behind it, or arriving after the close) exit quietly here.
     scheduled = os.environ.get("GITHUB_EVENT_NAME") == "schedule"
-    if now.strftime("%H:%M") > SESSION[mkt][1]:
-        print(f"The session is over ({SESSION[mkt][1]} {tz}). Nothing to do.")
+    if now.strftime("%H:%M") > SQUARED[mkt]:    # every trade is squared off by now; a new run would only repeat alerts
+        print(f"The session is over (square-off done by {SQUARED[mkt]} {tz}). Nothing to do.")
         sys.exit(0)
     if until:   # GitHub morning job: it must reach `until` within the ~6-hour job limit
         earliest = now.normalize() + pd.Timedelta(until + ":00") - pd.Timedelta(minutes=345)
